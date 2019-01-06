@@ -12,6 +12,10 @@
 #define Error_Ptr_Null      (-1)
 #define Error_UART_UnInit   (-2)
 
+#define FAULT_PROCESS()     while(1)
+
+#define DEBUG_MODE          
+
 /*
 开关值定义
 */
