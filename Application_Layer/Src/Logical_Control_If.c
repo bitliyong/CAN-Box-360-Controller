@@ -1,8 +1,8 @@
 #include "Logical_Control_If.h"
 
-#define LOGICAL_CONTROL_IF_VERSION  (0101)
+#define LOGICAL_CONTROL_IF_VERSION  (0102)
 #define GEAR_P_ENTER_DELAY          (2000u)//2s
-#define DEBUG_MODE                  
+        
 
 
 //时间管理模块instance句柄
@@ -23,7 +23,7 @@ CAN_Signal_Flag_t *pFlag;
 /*
 D档累计计时定时器
 */
-Timer_ID_t gearD_TimerID;
+Timer_ID_t gearD_TimerID = TIMER_ID_INVALID;
 /*
 D当倒计时完成的flag
 */
@@ -54,19 +54,19 @@ bool_t lastOperationDone;
 /*
 上电倒计时定时器
 */
-Timer_ID_t powerOnTimerID;
+Timer_ID_t powerOnTimerID = TIMER_ID_INVALID;
 /*
 环绕倒计时定时器
 */
-Timer_ID_t surroundTimerID;
+Timer_ID_t surroundTimerID = TIMER_ID_INVALID;
 /*
 延时定时器
 */
-Timer_ID_t delayTimerID;
+Timer_ID_t delayTimerID = TIMER_ID_INVALID;
 /*
 P档进入定时器
 */
-Timer_ID_t gearP_TimerID;
+Timer_ID_t gearP_TimerID = TIMER_ID_INVALID;
 /*
 视频通道进入方式
 */
@@ -116,7 +116,10 @@ Logical_Control_t logical_control_instance =
 #define PRIO_INVALID    (0xFFu)
 u8_t videoChannelPriority[Surround_View + 1u];
 
-
+struct __sys_status__
+{
+    bool_t accOffFlag;
+}sysStatus;
 /*
 获取instance的接口函数
 */
@@ -164,23 +167,24 @@ STATIC bool_t Logical_Control_Init(void)
     pLCITimeMgr_Instance->Initialization();
     //初始化CAN信号处理模块
     pCan_signal_process_instance->Initialization();
-    //初始化外部设备处理模块
-    pExternal_device_process_instance->Initialization();
-
-    //注册_360_device到外部设备处理模块
-    pExternal_device_process_instance->DeviceRegister(&_360_device);
-
-    //获取外部设备交互指示变量的指针
-    pIndicator = pExternal_device_process_instance->GetExternalDeviceInteractionIndicator();
-    
+        
     //初始化D档相关参数
     //创建D档定时器
-    gearD_TimerID = pLCITimeMgr_Instance->CreateTimer(15000, Timer_Once, GearD_Timer_Callback, Ptr_NULL);
+    if(gearD_TimerID == TIMER_ID_INVALID)
+    {
+        gearD_TimerID = pLCITimeMgr_Instance->CreateTimer(15000, Timer_Once, GearD_Timer_Callback, Ptr_NULL);
+
+        TIMER_ASSERT(gearD_TimerID, TIMER_ID_INVALID);
+    }
+
     gearDDone = FALSE;
 
-    gearP_TimerID = pLCITimeMgr_Instance->CreateTimer(GEAR_P_ENTER_DELAY, Timer_Once, GearP_Timer_Callback, Ptr_NULL);
-    gearDDone = FALSE;
+    if(gearP_TimerID == TIMER_ID_INVALID)
+    {
+        gearP_TimerID = pLCITimeMgr_Instance->CreateTimer(GEAR_P_ENTER_DELAY, Timer_Once, GearP_Timer_Callback, Ptr_NULL);
 
+        TIMER_ASSERT(gearP_TimerID, TIMER_ID_INVALID);
+    }
     //将状态机初始化为等待上电状态
     logical_control_state_machine = WaitPowerOn;
     //上一模式为原车模式
@@ -192,7 +196,21 @@ STATIC bool_t Logical_Control_Init(void)
 
     videoChannelPriorityInit();
 
+    sysStatus.accOffFlag = FALSE;
+
     return res;
+}
+//Initialize external device, registe avalidble external device and get indicator from external device
+STATIC void Logical_Control_External_Device_Initialization(void)
+{
+    //初始化外部设备处理模块
+    pExternal_device_process_instance->Initialization();
+
+    //注册_360_device到外部设备处理模块
+    pExternal_device_process_instance->DeviceRegister(&_360_device);
+
+    //获取外部设备交互指示变量的指针
+    pIndicator = pExternal_device_process_instance->GetExternalDeviceInteractionIndicator();
 }
 STATIC void Logical_Control_Back_To_PreWorkMode_Process(void)
 {
@@ -202,8 +220,13 @@ STATIC void Logical_Control_Back_To_PreWorkMode_Process(void)
         //在切换回上一模式之前，如果当前模式正在使用某些资源（如等待环绕完成状态会使用一个定时器），则需要释放这些定时器
         if(WaitSurroundDone == logical_control_state_machine)
         {
-            //删除上电环绕定时器
-            pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+            if(surroundTimerID != TIMER_ID_INVALID)
+            {
+                //删除上电环绕定时器
+                pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+
+                surroundTimerID = TIMER_ID_INVALID;
+            }
         }
 
         curModeChannelTracker = preModeChannelTracker;
@@ -237,8 +260,13 @@ STATIC bool_t Logical_Control_Switch_To_New_Work_Mode_Process(Video_Channle_t ne
         //在切换模式之前，如果当前模式正在使用某些资源（如等待环绕完成状态会使用一个定时器），则需要释放这些定时器
         if(WaitSurroundDone == logical_control_state_machine)
         {
-            //删除上电环绕定时器
-            pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+            if(surroundTimerID != TIMER_ID_INVALID)
+            {
+                //删除上电环绕定时器
+                pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+
+                surroundTimerID = TIMER_ID_INVALID;
+            }
         }
 
         //如果当前模式是手动进入的，则将其标记为上一模式
@@ -311,6 +339,8 @@ STATIC void Logical_Control_Delay_Done_Callback(void *arg)
     pIndicator->indicator_bits->flag_b.Send_TimeInfo_Sts = 1;
     //删除定时器
     pLCITimeMgr_Instance->DeleteTimer(delayTimerID);
+    //Set it to invalid
+    delayTimerID = TIMER_ID_INVALID;
 }
 STATIC void Logical_Control_Change_WorkMode_Process(Video_Channle_t channel)
 {
@@ -318,7 +348,12 @@ STATIC void Logical_Control_Change_WorkMode_Process(Video_Channle_t channel)
 
     //避免重复发送命令
     if(channel == lastChannel)
+	{
+        //last ooperation is done since nothing is going to do
+        lastOperationDone = TRUE;
+
         return;
+	}
 
     lastChannel = channel;
     
@@ -375,8 +410,39 @@ STATIC void Logical_Control_Change_WorkMode_Process(Video_Channle_t channel)
         break;
     }
 }
+STATIC void Logical_Control_Temp_Timer_Release(void)
+{
+    if(powerOnTimerID != TIMER_ID_INVALID)
+    {
+        pLCITimeMgr_Instance->StopTimer(powerOnTimerID);
+        pLCITimeMgr_Instance->DeleteTimer(powerOnTimerID);
+        powerOnTimerID = TIMER_ID_INVALID;
+    }
+
+    if(surroundTimerID != TIMER_ID_INVALID)
+    {
+        pLCITimeMgr_Instance->StopTimer(surroundTimerID);
+        pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+        surroundTimerID = TIMER_ID_INVALID;
+    }
+
+    if(delayTimerID != TIMER_ID_INVALID)
+    {
+        pLCITimeMgr_Instance->StopTimer(delayTimerID);
+        pLCITimeMgr_Instance->DeleteTimer(delayTimerID);
+        delayTimerID = TIMER_ID_INVALID;
+    }
+}
+STATIC void Logical_Control_ACC_ON_Process(void)
+{
+    Logical_Control_External_Device_Initialization();
+}
 STATIC void Logical_Control_ACC_OFF_Process(void)
 {
+    
+    //delete all temprary timer(powerOn, surround, delay) because they will be created again once the system runtime status is occured. 
+    Logical_Control_Temp_Timer_Release();
+    
     if(1u == pFlag->flag_b.Manual_ShowMode_Sts)
     {
         pFlag->flag_b.Manual_ShowMode_Sts = 0u;
@@ -384,14 +450,17 @@ STATIC void Logical_Control_ACC_OFF_Process(void)
         preModeChannelTracker.channel = Original_View;
     }
 
-    if(logical_control_state_machine > 127u)
-    {
-        Logical_Control_Back_To_PreWorkMode_Process();
-    }
-		else
-		{
-				logical_control_state_machine = WaitPowerOn;
-		}
+    // if(logical_control_state_machine > 127u)
+    // {
+    //     Logical_Control_Back_To_PreWorkMode_Process();
+    // }
+	// else
+	{
+        //if acc is off, then current channel shall set to be original view directly, since no more communication with external device is performed 
+        curModeChannelTracker.channel = Original_View;
+
+		logical_control_state_machine = WaitPowerOn;
+	}
 }
 STATIC void Logical_Control_Vehicle_Speed_High_Process(void)
 {
@@ -487,7 +556,21 @@ STATIC void Logical_Control_Vehicle_Signal_Process(void)
     //钥匙在OFF档时根据当前状态机进行处理
     if((1 == pFlag->flag_b.ACC_OFF_Sts) || (1 == pFlag->flag_b.ACC_OUT_Sts))
     {
-        Logical_Control_ACC_OFF_Process();
+        if(sysStatus.accOffFlag != TRUE)
+        {
+            sysStatus.accOffFlag = TRUE;
+            
+            Logical_Control_ACC_OFF_Process();
+        }
+    }
+    else
+    {
+        if(sysStatus.accOffFlag != FALSE)
+        {
+            sysStatus.accOffFlag = FALSE;
+
+            Logical_Control_ACC_ON_Process();
+        }
     }
     //档位处理
     if(1 == pFlag->flag_b.Gear_R_Sts)
@@ -626,9 +709,15 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
             //开始上电完成倒计时
             lastOperationDone = FALSE;
 
-            powerOnTimerID = pLCITimeMgr_Instance->CreateTimer(5000, Timer_Once, 
-                Logical_Control_PowerOn_Done_Callback, Ptr_NULL);
-            
+            if(powerOnTimerID == TIMER_ID_INVALID)
+            {
+                powerOnTimerID = pLCITimeMgr_Instance->CreateTimer(5000, Timer_Once, 
+                    Logical_Control_PowerOn_Done_Callback, Ptr_NULL);
+
+                TIMER_ASSERT(powerOnTimerID, TIMER_ID_INVALID);
+                
+            }
+
             pLCITimeMgr_Instance->StartTimer(powerOnTimerID);
 
             logical_control_state_machine = WaitPowerOnDone;
@@ -640,10 +729,15 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
                 //删除上电倒计时定时器
                 pLCITimeMgr_Instance->DeleteTimer(powerOnTimerID);
 
+                powerOnTimerID = TIMER_ID_INVALID;
+
                 //上电环绕使能
                 if(1u == pIndicator->indicator_bits->flag_b.PowerOn_Startup_Sts)
                 {
                     logical_control_state_machine = StartSurround;
+
+                    //将当前视图切换为环绕视图
+                    curModeChannelTracker.channel = Surround_View;
                 }
                 //原车模式
                 else
@@ -656,13 +750,19 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
             //开始上电完成倒计时
             lastOperationDone = FALSE;
 
-            surroundTimerID = pLCITimeMgr_Instance->CreateTimer(5000, Timer_Once, 
-                Logical_Control_Surround_Done_Callback, Ptr_NULL);
+            if(surroundTimerID == TIMER_ID_INVALID)
+            {
+                surroundTimerID = pLCITimeMgr_Instance->CreateTimer(5000, Timer_Once, 
+                    Logical_Control_Surround_Done_Callback, Ptr_NULL);
+
+                TIMER_ASSERT(surroundTimerID, TIMER_ID_INVALID);
+
+            }
             
             pLCITimeMgr_Instance->StartTimer(surroundTimerID);
 
-            //发送上电环绕的命令
-            pIndicator->indicator_bits->flag_b.Send_PowerOnSurround_Sts = 1;
+            //切换到上电环绕视图
+            Logical_Control_Change_WorkMode_Process(curModeChannelTracker.channel);
 
             //等待结果
             logical_control_state_machine = WaitSurroundDone;
@@ -676,6 +776,8 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
             {
                 //删除上电环绕定时器
                 pLCITimeMgr_Instance->DeleteTimer(surroundTimerID);
+
+                surroundTimerID = TIMER_ID_INVALID;
 
                 logical_control_state_machine = BackToPreWorkMode;
             }
@@ -696,6 +798,9 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
             //上电环绕命令发送完成,等待新的操作
             if(lastOperationDone)
             {
+                //current channel is changed to last one
+                curModeChannelTracker = preModeChannelTracker;
+
                 logical_control_state_machine = WaitForNewOperation;
             }
         break;
@@ -719,7 +824,11 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
             }
         break;
         case WaitForNewOperation:
-
+            //Acc off, then back to "wait power on" state
+            if(sysStatus.accOffFlag == TRUE)
+            {
+                logical_control_state_machine = WaitPowerOn;
+            }
         break;
         default:
 
@@ -740,12 +849,23 @@ STATIC void Logical_Control_CAN_Signal_Process(void)
 }
 STATIC void Logical_Control_External_Device_Process(void)
 {
+    //No process is accessable when Acc is off
+    if(sysStatus.accOffFlag != FALSE)
+        return;
+
     //如果与360设备握手成功，开始500ms倒计时用于发送系统时间
     if(1u == pIndicator->indicator_bits->flag_b.Handshake_OK_Sts)
     {
         pIndicator->indicator_bits->flag_b.Handshake_OK_Sts = 0u;
 
-        delayTimerID = pLCITimeMgr_Instance->CreateTimer(500, Timer_Once, Logical_Control_Delay_Done_Callback, Ptr_NULL);
+        if(delayTimerID == TIMER_ID_INVALID)
+        {
+            delayTimerID = pLCITimeMgr_Instance->CreateTimer(500, Timer_Once, 
+                Logical_Control_Delay_Done_Callback, Ptr_NULL);
+
+            TIMER_ASSERT(delayTimerID, TIMER_ID_INVALID);
+            
+        }
 
         pLCITimeMgr_Instance->StartTimer(delayTimerID);
     }

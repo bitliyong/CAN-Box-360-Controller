@@ -37,7 +37,7 @@ TimeMgr_t* External_Device_Process_TimeMgr_Instance;
 /*
 用于执行挂起操作的定时器
 */
-Timer_ID_t pendTimeoutTimerID;
+Timer_ID_t pendTimeoutTimerID = TIMER_ID_INVALID;
 /*
 挂起flag
 */
@@ -210,8 +210,13 @@ STATIC void External_Device_Process_Process(void)
             //挂起2秒
             if(TRUE == pendStartFlag)
             {
-                //创建一个挂起计时定时器
-                pendTimeoutTimerID = External_Device_Process_TimeMgr_Instance->CreateTimer(2000, Timer_Once, PendTimeout, Ptr_NULL);
+                if(pendTimeoutTimerID == TIMER_ID_INVALID)
+                {
+                    //创建一个挂起计时定时器
+                    pendTimeoutTimerID = External_Device_Process_TimeMgr_Instance->CreateTimer(2000, Timer_Once, PendTimeout, Ptr_NULL);
+
+                    TIMER_ASSERT(pendTimeoutTimerID, TIMER_ID_INVALID);
+                }
 
                 External_Device_Process_TimeMgr_Instance->StartTimer(pendTimeoutTimerID);
 

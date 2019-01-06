@@ -26,8 +26,8 @@ CAN_Signal_Flag_t canSignalFlag;
 CAN信号处理定时器
 */
 TimeMgr_t *pCSPITimeMgr_Instance;
-Timer_ID_t canTimer_200ms;
-Timer_ID_t turningMonitorTimer;
+Timer_ID_t canTimer_200ms = TIMER_ID_INVALID;
+Timer_ID_t turningMonitorTimer = TIMER_ID_INVALID;
 /*
 list键按下的时间
 */
@@ -76,9 +76,20 @@ STATIC bool_t CAN_Signal_Process_Init(void)
 
     //获取时间管理句柄
     pCSPITimeMgr_Instance = TimeMgr_Instance();
-    //创建定时器
-    canTimer_200ms = pCSPITimeMgr_Instance->CreateTimer(200u, Timer_Repeat, CAN_Signal_Process_Timer_Callback, Ptr_NULL);
-    turningMonitorTimer = pCSPITimeMgr_Instance->CreateTimer(TURNING_MONITOR_DELAY, Timer_Once, CAN_Signal_Process_TurningMonitor_Timer_Callback, Ptr_NULL);
+
+    if(canTimer_200ms == TIMER_ID_INVALID)
+    {
+        //创建定时器
+        canTimer_200ms = pCSPITimeMgr_Instance->CreateTimer(200u, Timer_Repeat, CAN_Signal_Process_Timer_Callback, Ptr_NULL);
+    
+        TIMER_ASSERT(canTimer_200ms, TIMER_ID_INVALID);
+    }
+    if(turningMonitorTimer == TIMER_ID_INVALID)
+    {
+        turningMonitorTimer = pCSPITimeMgr_Instance->CreateTimer(TURNING_MONITOR_DELAY, Timer_Once, CAN_Signal_Process_TurningMonitor_Timer_Callback, Ptr_NULL);
+    
+        TIMER_ASSERT(turningMonitorTimer, TIMER_ID_INVALID);
+    }
     
     listKeyPressedTime = 0u;
     //初始化车身信息记录

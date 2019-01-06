@@ -9,7 +9,7 @@ STATIC void _360_Device_Receive_Process(void);
 u8_t buffer[16];
 Stream_Device_t *streamDevice;
 TimeMgr_t *_360_Device_TimeMgr_Instance;
-Timer_ID_t timerID;
+Timer_ID_t timerID = TIMER_ID_INVALID;
 /*
 外部设备状态
 */
@@ -170,8 +170,14 @@ STATIC bool_t _360_Device_Init(void)
     streamDevice = Stream_Device_Instance();
     //创建超时检测定时器
     _360_Device_TimeMgr_Instance = TimeMgr_Instance();
-    timerID = _360_Device_TimeMgr_Instance->CreateTimer(200, Timer_Once, _360_Device_Timeout_Callback, Ptr_NULL);
+
+    //do not create it duplicately
+    if(timerID == TIMER_ID_INVALID)
+    {
+        timerID = _360_Device_TimeMgr_Instance->CreateTimer(200, Timer_Once, _360_Device_Timeout_Callback, Ptr_NULL);
 	
+        TIMER_ASSERT(timerID, TIMER_ID_INVALID);
+    }
 		//初始化流设备
 	  streamDevice->Initialization();
 
