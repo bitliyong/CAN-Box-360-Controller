@@ -467,8 +467,9 @@ STATIC void Logical_Control_Vehicle_Speed_High_Process(void)
     //可以退回到一个新的模式
     if(curModeChannelTracker.channel != preModeChannelTracker.channel)
     {
-        //R档不受车速的影响
-        if(curModeChannelTracker.channel != Global_Rear_View)
+        if((curModeChannelTracker.channel != Global_Rear_View) /*R档视图不受车速的影响*/
+        &&(curModeChannelTracker.channel != Surround_View)/*环绕视图不受车速影响*/
+        &&(curModeChannelTracker.channel != preModeChannelTracker.channel))/* 有切回上一视图的必要 */
         {
             //车速过高，切换到上一视图
             Logical_Control_Back_To_PreWorkMode_Process();
